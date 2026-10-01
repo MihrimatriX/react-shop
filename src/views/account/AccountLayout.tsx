@@ -4,87 +4,38 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "../../store/authStore";
 
-function navClass(active: boolean) {
-  return {
-    display: "block",
-    padding: "0.5rem 0.75rem",
-    borderRadius: 8,
-    textDecoration: "none",
-    color: active ? "#fff" : "var(--ink)",
-    background: active ? "var(--primary)" : "transparent",
-    fontWeight: 500,
-  } as const;
-}
+const NAV = [
+  ["/account", "Özet"],
+  ["/account/addresses", "Adresler"],
+  ["/account/payments", "Ödeme yöntemleri"],
+  ["/account/favorites", "Favoriler"],
+  ["/account/settings", "Tercihler"],
+  ["/account/notifications", "Bildirimler"],
+  ["/account/security", "Güvenlik"],
+];
 
 export function AccountLayout({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
   const pathname = usePathname();
 
   return (
-    <div className="container account-shell" style={{ paddingBlock: "2rem 3rem" }}>
-      <aside
-        className="card"
-        style={{ padding: "1rem", height: "fit-content" }}
-      >
-        <div
-          style={{
-            marginBottom: "1rem",
-            fontSize: "0.9rem",
-            color: "var(--muted)",
-          }}
-        >
-          {user?.firstName} {user?.lastName}
-          <div style={{ wordBreak: "break-all" }}>{user?.email}</div>
+    <div className="container page account-shell">
+      <aside className="card panel account-nav">
+        <div className="account-nav__user">
+          <strong>
+            {user?.firstName} {user?.lastName}
+          </strong>
+          <span className="muted small">{user?.email}</span>
         </div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <Link href="/account" style={navClass(pathname === "/account")}>
-            Özet
-          </Link>
-          <Link
-            href="/account/addresses"
-            style={navClass(pathname === "/account/addresses")}
-          >
-            Adresler
-          </Link>
-          <Link
-            href="/account/payments"
-            style={navClass(pathname === "/account/payments")}
-          >
-            Ödeme yöntemleri
-          </Link>
-          <Link
-            href="/account/favorites"
-            style={navClass(pathname === "/account/favorites")}
-          >
-            Favoriler
-          </Link>
-          <Link
-            href="/account/settings"
-            style={navClass(pathname === "/account/settings")}
-          >
-            Tercihler
-          </Link>
-          <Link
-            href="/account/notifications"
-            style={navClass(pathname === "/account/notifications")}
-          >
-            Bildirimler
-          </Link>
-          <Link
-            href="/account/security"
-            style={navClass(pathname === "/account/security")}
-          >
-            Güvenlik
-          </Link>
+        <nav>
+          {NAV.map(([href, label]) => (
+            <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>
+              {label}
+            </Link>
+          ))}
         </nav>
       </aside>
-      <div className="account-outlet">{children}</div>
-      <style>{`
-        .account-shell { display: grid; grid-template-columns: 200px 1fr; gap: 1.5rem; }
-        @media (max-width: 720px) {
-          .account-shell { grid-template-columns: 1fr; }
-        }
-      `}</style>
+      <div>{children}</div>
     </div>
   );
 }

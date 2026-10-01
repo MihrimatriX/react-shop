@@ -1,53 +1,43 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import { useState } from "react";
+import { api, unwrap } from "../../lib/api";
 import type { UserSettings } from "../../types/api";
 import { useAuthStore } from "../../store/authStore";
+
+const TOGGLES: [keyof UserSettings, string][] = [
+  ["emailNotifications", "E-posta bildirimleri"],
+  ["smsNotifications", "SMS bildirimleri"],
+  ["marketingEmails", "Kampanya e-postaları"],
+];
 
 export function SettingsPage() {
   const user = useAuthStore((s) => s.user)!;
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<UserSettings>({});
+  // Kullanıcı bir şey değiştirene kadar sunucu verisi gösterilir; effect ile kopyalamaya gerek yok.
+  const [draft, setDraft] = useState<UserSettings | null>(null);
 
   const q = useQuery({
-    queryKey: ["settings", user.userId],
-    queryFn: async () => {
-      const r = await api.settings.get(user.token, user.userId);
-      if (!r.success) throw new Error(r.message);
-      return r.data || {};
-    },
+    queryKey: ["settings"],
+    queryFn: () => api.settings.get(user.token, user.userId).then(unwrap),
   });
-
-  useEffect(() => {
-    if (q.data) setDraft(q.data);
-  }, [q.data]);
+  const value = draft ?? q.data ?? {};
+  const edit = (patch: UserSettings) => setDraft({ ...value, ...patch });
 
   const save = useMutation({
-    mutationFn: async () => {
-      const r = await api.settings.put(user.token, user.userId, draft);
-      if (!r.success) throw new Error(r.message || r.error);
-      return r.data;
+    mutationFn: () => api.settings.put(user.token, user.userId, value).then(unwrap),
+    onSuccess: (s) => {
+      qc.setQueryData(["settings"], s);
+      setDraft(null);
     },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["settings", user.userId] }),
   });
 
   return (
     <div>
-      <h1 className="brand-serif" style={{ fontSize: "1.5rem" }}>
-        Tercihler
-      </h1>
-      {q.isLoading ? <p>Yükleniyor…</p> : null}
+      <h1 className="page-title">Tercihler</h1>
       <form
-        className="card"
-        style={{
-          padding: "1rem",
-          display: "grid",
-          gap: "0.75rem",
-          maxWidth: 440,
-        }}
+        className="card panel form-grid narrow-form"
         onSubmit={(e) => {
           e.preventDefault();
           save.mutate();
@@ -55,66 +45,20 @@ export function SettingsPage() {
       >
         <label>
           Dil
-          <select
-            className="input"
-            value={draft.language || "tr"}
-            onChange={(e) => setDraft({ ...draft, language: e.target.value })}
-          >
+          <select className="input" value={value.language ?? "tr"} onChange={(e) => edit({ language: e.target.value })}>
             <option value="tr">Türkçe</option>
             <option value="en">English</option>
           </select>
         </label>
-        <label>
-          Para birimi
-          <input
-            className="input"
-            value={draft.currency || "TRY"}
-            onChange={(e) => setDraft({ ...draft, currency: e.target.value })}
-          />
-        </label>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={!!draft.emailNotifications}
-            onChange={(e) =>
-              setDraft({ ...draft, emailNotifications: e.target.checked })
-            }
-          />
-          E-posta bildirimleri
-        </label>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={!!draft.smsNotifications}
-            onChange={(e) =>
-              setDraft({ ...draft, smsNotifications: e.target.checked })
-            }
-          />
-          SMS
-        </label>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={!!draft.marketingEmails}
-            onChange={(e) =>
-              setDraft({ ...draft, marketingEmails: e.target.checked })
-            }
-          />
-          Pazarlama e-postaları
-        </label>
-        {save.isError ? (
-          <p style={{ color: "var(--danger)" }}>
-            {(save.error as Error).message}
-          </p>
-        ) : null}
-        {save.isSuccess ? (
-          <p style={{ color: "var(--primary)", margin: 0 }}>Kaydedildi.</p>
-        ) : null}
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={save.isPending}
-        >
+        {TOGGLES.map(([key, label]) => (
+          <label key={key} className="check">
+            <input type="checkbox" checked={!!value[key]} onChange={(e) => edit({ [key]: e.target.checked })} />
+            {label}
+          </label>
+        ))}
+        {save.isError ? <p className="error">{save.error.message}</p> : null}
+        {save.isSuccess && !draft ? <p className="success">Kaydedildi.</p> : null}
+        <button type="submit" className="btn btn-primary" disabled={save.isPending || !q.data}>
           Kaydet
         </button>
       </form>

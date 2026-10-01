@@ -1,24 +1,27 @@
 import { type NextRequest } from "next/server";
-import { db } from "@/server/store";
+import { db, type DemoUser } from "@/server/store";
 import { fail, ok } from "@/server/respond";
 
 export const dynamic = "force-dynamic";
 
-function bearer(req: NextRequest) {
-  const h = req.headers.get("authorization") || "";
-  return h.startsWith("Bearer ") ? h.slice(7) : null;
-}
+type Params = Record<string, string>;
 
-function auth(req: NextRequest) {
-  const user = db.userByToken(bearer(req));
-  if (!user) return null;
-  return user;
-}
+/** Pozitif tamsayı değilse null. */
+const posInt = (v: unknown) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+/** Kırpılmış ve uzunluğu sınırlanmış metin; boşsa undefined. */
+const text = (v: unknown, max = 500) =>
+  typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+const invalid = (message: string) => fail("VALIDATION_ERROR", 400, message);
 
-function match(slug: string[], pattern: string) {
-  const parts = pattern.split("/").filter(Boolean);
+const SETTINGS_KEYS = ["language", "currency", "emailNotifications", "smsNotifications", "marketingEmails"];
+
+function match(slug: string[], pattern: string): Params | null {
+  const parts = pattern.split("/");
   if (parts.length !== slug.length) return null;
-  const params: Record<string, string> = {};
+  const params: Params = {};
   for (let i = 0; i < parts.length; i++) {
     if (parts[i].startsWith(":")) params[parts[i].slice(1)] = slug[i];
     else if (parts[i] !== slug[i]) return null;
@@ -26,433 +29,289 @@ function match(slug: string[], pattern: string) {
   return params;
 }
 
-async function readJson(req: NextRequest) {
-  try {
-    return (await req.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+function session(r: { user: DemoUser; token: string }) {
+  const { user } = r;
+  return ok({
+    token: r.token,
+    userId: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    isEmailVerified: user.isEmailVerified,
+  });
 }
 
 async function handle(req: NextRequest, slug: string[]) {
   const method = req.method;
-  const url = new URL(req.url);
-  const q = url.searchParams;
+  const q = req.nextUrl.searchParams;
+  const raw: unknown = method === "POST" || method === "PUT" ? await req.json().catch(() => null) : null;
+  const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const is = (verb: string, pattern: string) => (method === verb ? match(slug, pattern) : null);
+  let m: Params | null;
 
-  let m: Record<string, string> | null;
+  // ---- Herkese açık uçlar ----
 
-  if (method === "POST" && match(slug, "auth/login")) {
-    const body = await readJson(req);
-    const email = String(body?.email || "");
-    const password = String(body?.password || "");
-    const u = db.login(email, password);
-    if (!u) return fail("E-posta veya şifre hatalı.", 401, { code: "UNAUTHORIZED" });
-    return ok({
-      token: u.token,
-      userId: u.id,
-      email: u.email,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      isEmailVerified: u.isEmailVerified,
-    });
+  if (is("POST", "auth/login")) {
+    const r = db.login(String(body.email ?? ""), String(body.password ?? ""));
+    return r ? session(r) : fail("UNAUTHORIZED", 401, "E-posta veya şifre hatalı.");
   }
 
-  if (method === "POST" && match(slug, "auth/register")) {
-    const body = (await readJson(req)) || {};
-    const email = String(body.email || "");
-    const password = String(body.password || "");
-    const firstName = String(body.firstName || "");
-    const lastName = String(body.lastName || "");
-    const fieldErrors: Record<string, string> = {};
-    if (!email) fieldErrors.email = "E-posta gerekli.";
-    if (password.length < 6) fieldErrors.password = "Şifre en az 6 karakter.";
-    if (!firstName) fieldErrors.firstName = "Ad gerekli.";
-    if (!lastName) fieldErrors.lastName = "Soyad gerekli.";
-    if (Object.keys(fieldErrors).length) {
-      return fail("Girdiğiniz bilgileri kontrol edin.", 400, {
-        code: "VALIDATION_ERROR",
-        fieldErrors,
-      });
-    }
+  if (is("POST", "auth/register")) {
+    const email = text(body.email, 120) ?? "";
+    const password = String(body.password ?? "");
+    const firstName = text(body.firstName, 60);
+    const lastName = text(body.lastName, 60);
+    if (!/^\S+@\S+\.\S+$/.test(email)) return invalid("Geçerli bir e-posta girin.");
+    if (password.length < 6) return invalid("Şifre en az 6 karakter olmalı.");
+    if (!firstName || !lastName) return invalid("Ad ve soyad gerekli.");
     const r = db.register({
       email,
       password,
       firstName,
       lastName,
-      address: body.address ? String(body.address) : undefined,
-      city: body.city ? String(body.city) : undefined,
-      postalCode: body.postalCode ? String(body.postalCode) : undefined,
-      phoneNumber: body.phoneNumber ? String(body.phoneNumber) : undefined,
+      address: text(body.address),
+      city: text(body.city, 60),
+      postalCode: text(body.postalCode, 10),
+      phoneNumber: text(body.phoneNumber, 20),
     });
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: "CONFLICT" });
-    const u = r.user;
-    return ok({
-      token: u.token,
-      userId: u.id,
-      email: u.email,
-      firstName: u.firstName,
-      lastName: u.lastName,
-    });
+    return r.error ? fail(r.error) : session(r);
   }
 
-  if (method === "POST" && match(slug, "auth/logout")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    db.logout(u.token);
-    return ok("Çıkış yapıldı");
-  }
+  if (is("GET", "category")) return ok(db.categories());
+  if (is("GET", "campaign/active")) return ok(db.campaigns());
+  if (is("GET", "product/featured")) return ok(db.featured());
+  if (is("GET", "product/discounted")) return ok(db.discounted());
+  if ((m = is("GET", "product/category/:categoryId"))) return ok(db.byCategory(Number(m.categoryId)));
 
-  if (method === "GET" && match(slug, "category")) {
-    return ok(db.categories());
-  }
-
-  if (method === "GET" && match(slug, "campaign/active")) {
-    return ok(db.campaigns());
-  }
-
-  if (method === "GET" && match(slug, "product/featured")) {
-    return ok(db.featured());
-  }
-
-  if (method === "GET" && match(slug, "product/discounted")) {
-    return ok(db.discounted());
-  }
-
-  m = match(slug, "product/category/:categoryId");
-  if (method === "GET" && m) {
-    return ok(db.byCategory(Number(m.categoryId)));
-  }
-
-  m = match(slug, "product/:id");
-  if (method === "GET" && m) {
+  if ((m = is("GET", "product/:id"))) {
     const p = db.product(Number(m.id));
-    if (!p) return fail("Ürün bulunamadı.", 404);
-    return ok(p);
+    return p ? ok(p) : fail("PRODUCT_NOT_FOUND", 404);
   }
 
-  if (method === "GET" && match(slug, "product")) {
-    const pageNumber = Number(q.get("pageNumber") || "1") || 1;
-    const pageSize = Number(q.get("pageSize") || "24") || 24;
-    const categoryId = q.get("categoryId") ? Number(q.get("categoryId")) : undefined;
-    const minPrice = q.get("minPrice") ? Number(q.get("minPrice")) : undefined;
-    const maxPrice = q.get("maxPrice") ? Number(q.get("maxPrice")) : undefined;
+  if (is("GET", "product")) {
+    const num = (k: string) => {
+      const n = Number(q.get(k) || NaN);
+      return Number.isFinite(n) ? n : undefined;
+    };
     return ok(
       db.productsPage({
-        pageNumber,
-        pageSize,
+        pageNumber: posInt(q.get("pageNumber")) ?? 1,
+        pageSize: Math.min(posInt(q.get("pageSize")) ?? 24, 100),
         sortBy: q.get("sortBy") || "id",
         sortOrder: q.get("sortOrder") || "asc",
-        categoryId: Number.isFinite(categoryId) ? categoryId : undefined,
+        categoryId: posInt(q.get("categoryId")) ?? undefined,
         searchTerm: q.get("searchTerm") || undefined,
-        minPrice: Number.isFinite(minPrice) ? minPrice : undefined,
-        maxPrice: Number.isFinite(maxPrice) ? maxPrice : undefined,
+        minPrice: num("minPrice"),
+        maxPrice: num("maxPrice"),
       }),
     );
   }
 
-  m = match(slug, "review/product/:productId/summary");
-  if (method === "GET" && m) {
-    return ok(db.reviewSummary(Number(m.productId)));
+  if ((m = is("GET", "review/product/:productId/summary"))) return ok(db.reviewSummary(Number(m.productId)));
+  if ((m = is("GET", "review/product/:productId"))) return ok(db.reviews(Number(m.productId)));
+
+  // ---- Buradan sonrası oturum ister ----
+
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const u = db.userByToken(token);
+  if (!u || !token) return fail("UNAUTHORIZED", 401);
+  const forbidden = (userId: string) => Number(userId) !== u.id;
+
+  if (is("POST", "auth/logout")) {
+    db.logout(token);
+    return ok(null);
   }
 
-  m = match(slug, "review/product/:productId");
-  if (method === "GET" && m) {
-    return ok(db.reviews(Number(m.productId)));
-  }
-
-  if (method === "POST" && match(slug, "review")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
+  if (is("POST", "review")) {
     const productId = Number(body.productId);
     const rating = Number(body.rating);
-    if (!db.product(productId)) return fail("Ürün bulunamadı.", 404);
-    if (rating < 1 || rating > 5) return fail("Puan 1-5 olmalı.", 400);
+    if (!db.product(productId)) return fail("PRODUCT_NOT_FOUND", 404);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return invalid("Puan 1 ile 5 arasında olmalı.");
     return ok(
       db.addReview({
         productId,
-        userId: u.id,
         rating,
-        title: body.title ? String(body.title) : undefined,
-        comment: body.comment ? String(body.comment) : undefined,
+        title: text(body.title, 120),
+        comment: text(body.comment, 1000),
         userName: `${u.firstName} ${u.lastName[0]}.`,
       }),
     );
   }
 
-  if (method === "GET" && match(slug, "cart")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    return ok(db.cart(u.id));
+  if (is("GET", "cart")) return ok(db.cart(u.id));
+
+  if (is("POST", "cart/add")) {
+    const quantity = body.quantity === undefined ? 1 : posInt(body.quantity);
+    if (!quantity) return invalid("Adet pozitif bir tamsayı olmalı.");
+    const r = db.cartAdd(u.id, Number(body.productId), quantity);
+    return r.error ? fail(r.error) : ok(r.cart);
   }
 
-  if (method === "POST" && match(slug, "cart/add")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    const r = db.cartAdd(u.id, Number(body.productId), Number(body.quantity) || 1);
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: r.error });
-    return ok(r.cart);
+  if (is("PUT", "cart/update")) {
+    const quantity = Number(body.quantity);
+    if (!Number.isInteger(quantity) || quantity < 0) return invalid("Adet 0 veya pozitif bir tamsayı olmalı.");
+    const r = db.cartUpdate(u.id, Number(body.productId), quantity);
+    return r.error ? fail(r.error) : ok(r.cart);
   }
 
-  if (method === "PUT" && match(slug, "cart/update")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    const r = db.cartUpdate(u.id, Number(body.productId), Number(body.quantity));
-    if (typeof r === "object" && "error" in r) {
-      return fail(r.error ?? "Hata", 409, { code: r.error });
-    }
-    return ok(r.cart);
-  }
+  if ((m = is("DELETE", "cart/remove/:productId"))) return ok(db.cartRemove(u.id, Number(m.productId)));
 
-  m = match(slug, "cart/remove/:productId");
-  if (method === "DELETE" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    return ok(db.cartRemove(u.id, Number(m.productId)));
-  }
-
-  if (method === "DELETE" && match(slug, "cart/clear")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if (is("DELETE", "cart/clear")) {
     db.cartClear(u.id);
-    return ok("Sepet temizlendi");
+    return ok(null);
   }
 
-  if (method === "GET" && match(slug, "order")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    return ok(db.orders(u.id));
-  }
+  if (is("GET", "order")) return ok(db.orders(u.id));
 
-  if (method === "POST" && match(slug, "order")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    const items = Array.isArray(body.items) ? body.items : [];
+  if (is("POST", "order")) {
     const r = db.createOrder(
       u.id,
       {
         shippingAddressId: Number(body.shippingAddressId),
         paymentMethodId: Number(body.paymentMethodId),
-        notes: body.notes ? String(body.notes) : undefined,
-        items: items.map((i: { productId: number; quantity: number }) => ({
-          productId: Number(i.productId),
-          quantity: Number(i.quantity),
-        })),
+        notes: text(body.notes),
       },
-      req.headers.get("idempotency-key"),
+      text(req.headers.get("idempotency-key"), 64) ?? null,
     );
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: r.error });
-    return ok(r.order);
+    return r.error ? fail(r.error) : ok(r.order);
   }
 
-  m = match(slug, "order/:id/cancel");
-  if (method === "PUT" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    const r = db.cancelOrder(u.id, Number(m.id), body.reason ? String(body.reason) : undefined);
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: r.error });
-    return ok("Sipariş iptal edildi");
+  if ((m = is("PUT", "order/:id/cancel"))) {
+    const r = db.cancelOrder(u.id, Number(m.id), text(body.reason));
+    return r.error ? fail(r.error) : ok(r.order);
   }
 
-  m = match(slug, "order/:id/return-request");
-  if (method === "POST" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    const reason = String(body.reason || "").trim();
-    if (!reason) return fail("İade nedeni gerekli.", 400);
+  if ((m = is("POST", "order/:id/return-request"))) {
+    const reason = text(body.reason);
+    if (!reason) return invalid("İade nedeni gerekli.");
     const r = db.returnRequest(u.id, Number(m.id), reason);
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: r.error });
-    return ok(r.order);
+    return r.error ? fail(r.error) : ok(r.order);
   }
 
-  m = match(slug, "order/:id/demo/advance-fulfillment");
-  if (method === "POST" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("POST", "order/:id/demo/advance-fulfillment"))) {
     const r = db.demoAdvance(u.id, Number(m.id));
-    if ("error" in r) return fail(r.error ?? "Hata", 409, { code: r.error });
-    return ok(r.order);
+    return r.error ? fail(r.error) : ok(r.order);
   }
 
-  m = match(slug, "order/:id");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("GET", "order/:id"))) {
     const o = db.order(u.id, Number(m.id));
-    if (!o) return fail("Sipariş bulunamadı.", 404, { code: "ORDER_NOT_FOUND" });
-    return ok(o);
+    return o ? ok(o) : fail("ORDER_NOT_FOUND", 404);
   }
 
-  m = match(slug, "address/user/:userId");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    if (u.id !== Number(m.userId)) return fail("Yetkisiz.", 403, { code: "FORBIDDEN" });
-    return ok(db.addresses(u.id));
+  if ((m = is("GET", "address/user/:userId"))) {
+    return forbidden(m.userId) ? fail("FORBIDDEN", 403) : ok(db.addresses(u.id));
   }
 
-  if (method === "POST" && match(slug, "address")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
+  if (is("POST", "address")) {
+    const fullAddress = text(body.fullAddress);
+    const city = text(body.city, 60);
+    if (!fullAddress || !city) return invalid("Açık adres ve şehir gerekli.");
     return ok(
       db.addAddress(u.id, {
-        title: String(body.title || "Adres"),
-        fullAddress: String(body.fullAddress || ""),
-        city: String(body.city || ""),
-        district: String(body.district || ""),
-        postalCode: String(body.postalCode || ""),
-        country: body.country ? String(body.country) : "Turkey",
-        isDefault: Boolean(body.isDefault),
-        phoneNumber: body.phoneNumber ? String(body.phoneNumber) : undefined,
+        title: text(body.title, 40) ?? "Adres",
+        fullAddress,
+        city,
+        district: text(body.district, 60) ?? "",
+        postalCode: text(body.postalCode, 10) ?? "",
+        country: text(body.country, 60) ?? "Turkey",
+        isDefault: body.isDefault === true,
+        phoneNumber: text(body.phoneNumber, 20),
       }),
     );
   }
 
-  m = match(slug, "address/:id");
-  if (method === "DELETE" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("DELETE", "address/:id"))) {
     db.deleteAddress(u.id, Number(m.id));
-    return ok("Silindi");
+    return ok(null);
   }
 
-  m = match(slug, "payment-method/user/:userId");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    if (u.id !== Number(m.userId)) return fail("Yetkisiz.", 403, { code: "FORBIDDEN" });
-    return ok(db.payments(u.id));
+  if ((m = is("GET", "payment-method/user/:userId"))) {
+    return forbidden(m.userId) ? fail("FORBIDDEN", 403) : ok(db.payments(u.id));
   }
 
-  if (method === "POST" && match(slug, "payment-method")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
+  if (is("POST", "payment-method")) {
+    const digits = String(body.cardNumber ?? "").replace(/\D/g, "");
+    const expiryMonth = posInt(body.expiryMonth);
+    if (digits.length < 12 || digits.length > 19) return invalid("Geçerli bir kart numarası girin.");
+    if (!expiryMonth || expiryMonth > 12) return invalid("Son kullanma ayı 1-12 olmalı.");
     return ok(
       db.addPayment(u.id, {
-        type: String(body.type || "CREDIT_CARD"),
-        cardHolderName: body.cardHolderName ? String(body.cardHolderName) : undefined,
-        cardNumber: body.cardNumber ? String(body.cardNumber) : undefined,
-        expiryMonth: body.expiryMonth != null ? Number(body.expiryMonth) : undefined,
-        expiryYear: body.expiryYear != null ? Number(body.expiryYear) : undefined,
-        isDefault: Boolean(body.isDefault),
+        cardHolderName: text(body.cardHolderName, 80),
+        cardNumber: digits,
+        expiryMonth,
+        expiryYear: posInt(body.expiryYear) ?? undefined,
+        isDefault: body.isDefault === true,
       }),
     );
   }
 
-  m = match(slug, "payment-method/:id");
-  if (method === "DELETE" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("DELETE", "payment-method/:id"))) {
     db.deletePayment(u.id, Number(m.id));
-    return ok("Silindi");
+    return ok(null);
   }
 
-  if (method === "GET" && match(slug, "favorite")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    return ok(db.favorites(u.id));
+  if (is("GET", "favorite")) return ok(db.favorites(u.id));
+
+  if (is("POST", "favorite/add")) {
+    const productId = Number(body.productId);
+    if (!db.product(productId)) return fail("PRODUCT_NOT_FOUND", 404);
+    return ok(db.favAdd(u.id, productId));
   }
 
-  if (method === "POST" && match(slug, "favorite/add")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
-    return ok(db.favAdd(u.id, Number(body.productId)));
-  }
-
-  m = match(slug, "favorite/remove/:productId");
-  if (method === "DELETE" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("DELETE", "favorite/remove/:productId"))) {
     db.favRemove(u.id, Number(m.productId));
-    return ok("Kaldırıldı");
+    return ok(null);
   }
 
-  m = match(slug, "favorite/check/:productId");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    return ok(db.favCheck(u.id, Number(m.productId)));
+  if ((m = is("GET", "favorite/check/:productId"))) return ok(db.favCheck(u.id, Number(m.productId)));
+
+  if ((m = is("GET", "settings/user/:userId"))) {
+    return forbidden(m.userId) ? fail("FORBIDDEN", 403) : ok(db.settings(u.id));
   }
 
-  m = match(slug, "settings/user/:userId");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    if (u.id !== Number(m.userId)) return fail("Yetkisiz.", 403, { code: "FORBIDDEN" });
-    return ok(db.settings(u.id));
+  if ((m = is("PUT", "settings/user/:userId"))) {
+    if (forbidden(m.userId)) return fail("FORBIDDEN", 403);
+    const patch = Object.fromEntries(
+      Object.entries(body).filter(
+        ([k, v]) => SETTINGS_KEYS.includes(k) && (typeof v === "boolean" || (typeof v === "string" && v.length <= 10)),
+      ),
+    );
+    return ok(db.putSettings(u.id, patch));
   }
 
-  m = match(slug, "settings/user/:userId");
-  if (method === "PUT" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    if (u.id !== Number(m.userId)) return fail("Yetkisiz.", 403, { code: "FORBIDDEN" });
-    const body = (await readJson(req)) || {};
-    return ok(db.putSettings(u.id, body));
+  if ((m = is("GET", "notification/user/:userId"))) {
+    return forbidden(m.userId) ? fail("FORBIDDEN", 403) : ok(db.notifications(u.id));
   }
 
-  m = match(slug, "notification/user/:userId");
-  if (method === "GET" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    if (u.id !== Number(m.userId)) return fail("Yetkisiz.", 403, { code: "FORBIDDEN" });
-    return ok(db.notifications(u.id));
-  }
-
-  if (method === "PUT" && match(slug, "notification/mark-all-read")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if (is("PUT", "notification/mark-all-read")) {
     db.markAllRead(u.id);
-    return ok("Tamamı okundu");
+    return ok(null);
   }
 
-  m = match(slug, "notification/:id");
-  if (method === "PUT" && m) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
+  if ((m = is("PUT", "notification/:id"))) {
     const n = db.markRead(u.id, Number(m.id));
-    if (!n) return fail("Bildirim bulunamadı.", 404);
-    return ok(n);
+    return n ? ok(n) : fail("NOTIFICATION_NOT_FOUND", 404);
   }
 
-  if (method === "POST" && match(slug, "security/change-password")) {
-    const u = auth(req);
-    if (!u) return fail("Giriş gerekli.", 401, { code: "UNAUTHORIZED" });
-    const body = (await readJson(req)) || {};
+  if (is("POST", "security/change-password")) {
     const err = db.changePassword(
       u,
-      String(body.currentPassword || ""),
-      String(body.newPassword || ""),
-      String(body.confirmPassword || ""),
+      String(body.currentPassword ?? ""),
+      String(body.newPassword ?? ""),
+      String(body.confirmPassword ?? ""),
     );
-    if (err) return fail(err, 400, { code: "VALIDATION_ERROR" });
-    return ok("Şifre güncellendi");
+    return err ? invalid(err) : ok(null);
   }
 
-  return fail("Bu işlem bu adreste desteklenmiyor.", 404, { code: "METHOD_NOT_ALLOWED" });
+  return fail("NOT_FOUND", 404);
 }
 
-export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
-  const { slug } = await ctx.params;
-  return handle(req, slug);
+async function handler(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
+  return handle(req, (await ctx.params).slug);
 }
-export async function POST(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
-  const { slug } = await ctx.params;
-  return handle(req, slug);
-}
-export async function PUT(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
-  const { slug } = await ctx.params;
-  return handle(req, slug);
-}
-export async function DELETE(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
-  const { slug } = await ctx.params;
-  return handle(req, slug);
-}
+
+export const GET = handler;
+export const POST = handler;
+export const PUT = handler;
+export const DELETE = handler;

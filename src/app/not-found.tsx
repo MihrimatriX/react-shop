@@ -11,9 +11,9 @@ export const metadata: Metadata = pageMeta({
 
 export default function NotFound() {
   return (
-    <div className="container" style={{ paddingBlock: "3rem", textAlign: "center" }}>
-      <h1 className="brand-display">Sayfa bulunamadı</h1>
-      <p style={{ color: "var(--muted)" }}>Aradığınız adres yok.</p>
+    <div className="container empty">
+      <h1 className="page-title">Sayfa bulunamadı</h1>
+      <p className="muted">Aradığınız adres yok.</p>
       <Link href="/" className="btn btn-primary">
         Anasayfa
       </Link>

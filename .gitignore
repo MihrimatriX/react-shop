@@ -24,3 +24,8 @@ out
 *.njsproj
 *.sln
 *.sw?
+
+# Env
+.env*
+!.env.example
+*.tsbuildinfo

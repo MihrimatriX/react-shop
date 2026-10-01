@@ -1,17 +1,11 @@
-export interface BaseResponse<T> {
+export interface ApiResponse<T> {
   success: boolean;
   message?: string;
   data?: T;
-  error?: string;
   /** Sunucu iş kuralı / hata kodu (örn. STOCK_INSUFFICIENT) */
   code?: string;
-  fieldErrors?: Record<string, string>;
-  /** Sunucu loglarıyla eşleştirme (X-Correlation-ID / cid) */
-  traceId?: string;
+  httpStatus: number;
 }
-
-/** fetch sonrası HTTP durumu ile birlikte */
-export type ApiResponse<T> = BaseResponse<T> & { httpStatus: number };
 
 export interface AuthUser {
   token: string;
@@ -25,7 +19,12 @@ export interface AuthUser {
 export interface Product {
   id: number;
   productName: string;
+  /** Liste fiyatı */
   unitPrice: number;
+  /** İndirim sonrası satış fiyatı */
+  price: number;
+  rating: number;
+  reviewCount: number;
   unitInStock: number;
   quantityPerUnit: string;
   categoryId: number;
@@ -115,6 +114,7 @@ export interface Order {
   items: OrderItem[];
   shippingAddress?: Address;
   paymentMethod?: PaymentMethod;
+  notes?: string;
   createdAt?: string;
   updatedAt?: string;
   trackingNumber?: string;
@@ -158,21 +158,20 @@ export interface UserSettings {
 
 export interface CartItemDto {
   productId: number;
-  productName?: string;
+  productName: string;
   productImageUrl?: string;
-  unitPrice?: number;
+  /** İndirim sonrası birim fiyat */
+  unitPrice: number;
   quantity: number;
-  totalPrice?: number;
-  discount?: number;
-  unitInStock?: number;
-  quantityPerUnit?: string;
+  totalPrice: number;
+  unitInStock: number;
 }
 
 export interface CartDto {
-  userId?: number;
+  userId: number;
   items: CartItemDto[];
-  totalItems?: number;
-  totalAmount?: number;
+  totalItems: number;
+  totalAmount: number;
 }
 
 export interface NotificationItem {

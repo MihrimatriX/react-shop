@@ -1,250 +1,142 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../lib/api";
-import { userVisibleError } from "../lib/apiError";
+import { api, unwrap } from "../lib/api";
 import { formatTry } from "../lib/format";
 import { useAuthStore } from "../store/authStore";
-import { cartLinesFromDto, cartSubtotal } from "../store/cartStore";
+import { useCart } from "../store/cartStore";
+
+const newKey = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export function CheckoutPage() {
   const user = useAuthStore((s) => s.user)!;
-  const qc = useQueryClient();
   const router = useRouter();
-  const [addrId, setAddrId] = useState<number | null>(null);
-  const [payId, setPayId] = useState<number | null>(null);
+  const qc = useQueryClient();
+  const cart = useCart();
+  const [addrPick, setAddrPick] = useState<number>();
+  const [payPick, setPayPick] = useState<number>();
   const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  const cartQ = useQuery({
-    queryKey: ["cart", user.token],
-    queryFn: async () => {
-      const r = await api.cart.get(user.token);
-      if (!r.success || !r.data) throw new Error(r.message);
-      return r.data;
-    },
-  });
+  // Sayfa başına tek anahtar: ağ hatasında yeniden denemek aynı siparişi döndürür, ikincisini açmaz.
+  const [idemKey] = useState(newKey);
 
   const addresses = useQuery({
-    queryKey: ["addresses", user.userId],
-    queryFn: async () => {
-      const r = await api.addresses.list(user.token, user.userId);
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
-    },
+    queryKey: ["addresses"],
+    queryFn: () => api.addresses.list(user.token, user.userId).then(unwrap),
   });
-
   const payments = useQuery({
-    queryKey: ["payments", user.userId],
-    queryFn: async () => {
-      const r = await api.payments.list(user.token, user.userId);
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
+    queryKey: ["payments"],
+    queryFn: () => api.payments.list(user.token, user.userId).then(unwrap),
+  });
+
+  // Kullanıcı seçim yapmadıysa varsayılan adres / kart seçili gelir.
+  const addrId = addrPick ?? addresses.data?.find((a) => a.isDefault)?.id;
+  const payId = payPick ?? payments.data?.find((p) => p.isDefault)?.id;
+
+  const order = useMutation({
+    mutationFn: () =>
+      api.orders
+        .create(user.token, { shippingAddressId: addrId!, paymentMethodId: payId!, notes: notes || undefined }, idemKey)
+        .then(unwrap),
+    onSuccess: (o) => {
+      void qc.invalidateQueries({ queryKey: ["cart"] });
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+      router.push(`/orders/${o.id}`);
     },
   });
 
-  const lines = cartLinesFromDto(cartQ.data);
-  const sub = cartSubtotal(lines);
-
-  async function submit() {
-    setErr("");
-    if (!addrId || !payId) {
-      setErr("Teslimat adresi ve ödeme yöntemi seçin.");
-      return;
-    }
-    const items = cartQ.data?.items ?? [];
-    if (items.length === 0) {
-      setErr("Sepet boş.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const idem = crypto.randomUUID().replace(/-/g, "");
-      const body = {
-        shippingAddressId: addrId,
-        paymentMethodId: payId,
-        notes: notes || undefined,
-        items: items.map((i) => ({
-          productId: i.productId,
-          quantity: i.quantity,
-        })),
-      };
-      const r = await api.orders.create(user.token, body, idem);
-      if (!r.success || !r.data) {
-        setErr(userVisibleError(r));
-        return;
-      }
-      await qc.invalidateQueries({ queryKey: ["cart"] });
-      router.push(`/orders/${r.data.id}`);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (cartQ.isLoading) {
+  if (cart.isError) return <p className="container page error">{cart.error.message}</p>;
+  if (!cart.data) return <p className="container page muted">Sepet yükleniyor…</p>;
+  if (cart.data.items.length === 0 && !order.isSuccess) {
     return (
-      <div className="container" style={{ paddingBlock: "2rem" }}>
-        <p>Sepet yükleniyor…</p>
-      </div>
-    );
-  }
-
-  if (cartQ.isError) {
-    return (
-      <div className="container" style={{ paddingBlock: "2rem" }}>
-        <p style={{ color: "var(--danger)" }}>
-          {(cartQ.error as Error).message}
-        </p>
-      </div>
-    );
-  }
-
-  if (lines.length === 0) {
-    return (
-      <div className="container" style={{ paddingBlock: "2rem" }}>
-        <p>Sepet boş.</p>
+      <div className="container empty">
+        <p className="muted">Sepetiniz boş.</p>
+        <Link href="/shop" className="btn btn-primary">
+          Mağazaya git
+        </Link>
       </div>
     );
   }
 
   return (
-    <div
-      className="container"
-      style={{ paddingBlock: "2rem 3rem", maxWidth: 640 }}
-    >
-      <h1 className="brand-serif" style={{ fontSize: "1.75rem" }}>
-        Ödeme
-      </h1>
-      <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-        İstekte <code>Idempotency-Key</code> kullanılır; çift tıklamada
-        yinelenen sipariş oluşmaz. Onay sonrası sepet sunucuda temizlenir.
-      </p>
+    <div className="container page narrow">
+      <h1 className="page-title">Ödeme</h1>
 
-      <section className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-        <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>
-          Teslimat adresi
-        </h2>
+      <section className="card panel">
+        <h2>Teslimat adresi</h2>
         {addresses.isLoading ? (
-          <p>Yükleniyor…</p>
-        ) : (addresses.data || []).length === 0 ? (
+          <p className="muted">Yükleniyor…</p>
+        ) : !addresses.data?.length ? (
           <p>
-            Kayıtlı adres yok. <a href="/account/addresses">Adres ekleyin</a>
+            Kayıtlı adres yok. <Link href="/account/addresses">Adres ekleyin</Link>
           </p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {addresses.data!.map((a) => (
-              <li key={a.id} style={{ marginBottom: "0.5rem" }}>
-                <label
-                  style={{
-                    display: "flex",
-                    gap: "0.5rem",
-                    alignItems: "flex-start",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="addr"
-                    checked={addrId === a.id}
-                    onChange={() => setAddrId(a.id)}
-                  />
-                  <span>
-                    <strong>{a.title}</strong>{" "}
-                    {a.isDefault ? (
-                      <span className="badge">varsayılan</span>
-                    ) : null}
-                    <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-                      {a.fullAddress}, {a.district}/{a.city} {a.postalCode}
-                    </div>
+          <div className="choices">
+            {addresses.data.map((a) => (
+              <label key={a.id} className="choice">
+                <input type="radio" name="addr" checked={addrId === a.id} onChange={() => setAddrPick(a.id)} />
+                <span>
+                  <strong>{a.title}</strong> {a.isDefault ? <span className="badge">varsayılan</span> : null}
+                  <span className="muted small block">
+                    {a.fullAddress}, {a.district}/{a.city} {a.postalCode}
                   </span>
-                </label>
-              </li>
+                </span>
+              </label>
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
-      <section className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-        <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>
-          Ödeme yöntemi
-        </h2>
+      <section className="card panel">
+        <h2>Ödeme yöntemi</h2>
         {payments.isLoading ? (
-          <p>Yükleniyor…</p>
-        ) : (payments.data || []).length === 0 ? (
+          <p className="muted">Yükleniyor…</p>
+        ) : !payments.data?.length ? (
           <p>
-            Kayıtlı kart yok. <a href="/account/payments">Kart ekleyin</a>
+            Kayıtlı kart yok. <Link href="/account/payments">Kart ekleyin</Link>
           </p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {payments.data!.map((p) => (
-              <li key={p.id} style={{ marginBottom: "0.5rem" }}>
-                <label
-                  style={{
-                    display: "flex",
-                    gap: "0.5rem",
-                    alignItems: "center",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="pay"
-                    checked={payId === p.id}
-                    onChange={() => setPayId(p.id)}
-                  />
-                  <span>
-                    {p.type} · {p.cardNumber}{" "}
-                    {p.isDefault ? (
-                      <span className="badge">varsayılan</span>
-                    ) : null}
-                  </span>
-                </label>
-              </li>
+          <div className="choices">
+            {payments.data.map((p) => (
+              <label key={p.id} className="choice">
+                <input type="radio" name="pay" checked={payId === p.id} onChange={() => setPayPick(p.id)} />
+                <span>
+                  {p.cardNumber} {p.isDefault ? <span className="badge">varsayılan</span> : null}
+                  <span className="muted small block">{p.cardHolderName}</span>
+                </span>
+              </label>
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
-      <section className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-        <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>
-          Sipariş notu
-        </h2>
+      <section className="card panel">
+        <h2>Sipariş notu</h2>
         <textarea
           className="input"
           rows={2}
+          maxLength={500}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Kapı şifresi, teslimat saati…"
         />
       </section>
 
-      <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: "1.15rem",
-          }}
-        >
-          <span>Toplam</span>
-          <strong>{formatTry(sub)}</strong>
+      <div className="card panel">
+        <div className="row-between total-row">
+          <span>Toplam ({cart.data.totalItems} ürün)</span>
+          <strong>{formatTry(cart.data.totalAmount)}</strong>
         </div>
-        {err ? (
-          <p style={{ color: "var(--danger)", marginBottom: 0 }}>{err}</p>
-        ) : null}
+        {order.isError ? <p className="error">{order.error.message}</p> : null}
         <button
           type="button"
-          className="btn btn-accent"
-          style={{ width: "100%", marginTop: "1rem" }}
-          disabled={busy}
-          onClick={submit}
+          className="btn btn-primary btn-block"
+          disabled={!addrId || !payId || order.isPending || order.isSuccess}
+          onClick={() => order.mutate()}
         >
-          {busy ? "Gönderiliyor…" : "Siparişi onayla"}
+          {order.isPending ? "Gönderiliyor…" : "Siparişi onayla"}
         </button>
       </div>
     </div>

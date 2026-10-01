@@ -1,10 +1,14 @@
 import type { Metadata, Viewport } from "next";
+import { DM_Sans } from "next/font/google";
 import { JsonLd } from "@/components/JsonLd";
 import { Layout } from "@/components/Layout";
 import { Providers } from "@/components/Providers";
 import { websiteJsonLd } from "@/lib/seo";
 import { SITE_DESCRIPTION, SITE_LOCALE, SITE_NAME, siteUrl } from "@/lib/site";
+import { CATEGORIES } from "@/server/catalog";
 import "./globals.css";
+
+const font = DM_Sans({ subsets: ["latin", "latin-ext"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
@@ -71,25 +75,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="tr">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="tr" className={font.variable}>
       <body>
         <JsonLd data={websiteJsonLd()} />
         <Providers>
-          <div className="app-shell">
-            <Layout>{children}</Layout>
-          </div>
+          <Layout categories={CATEGORIES}>{children}</Layout>
         </Providers>
       </body>
     </html>

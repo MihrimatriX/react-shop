@@ -1,28 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "../store/authStore";
 
+const subscribe = (cb: () => void) => useAuthStore.persist.onFinishHydration(cb);
+const hydrated = () => useAuthStore.persist.hasHydrated();
+
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.user?.token);
+  const ready = useSyncExternalStore(subscribe, hydrated, () => false);
   const pathname = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const unsub = useAuthStore.persist.onFinishHydration(() => setReady(true));
-    if (useAuthStore.persist.hasHydrated()) setReady(true);
-    return unsub;
-  }, []);
+    if (ready && !token) router.replace(`/login?from=${encodeURIComponent(pathname)}`);
+  }, [ready, token, pathname, router]);
 
-  useEffect(() => {
-    if (!ready) return;
-    if (!user?.token) {
-      router.replace(`/login?from=${encodeURIComponent(pathname)}`);
-    }
-  }, [ready, user, pathname, router]);
-
-  if (!ready || !user?.token) return null;
-  return <>{children}</>;
+  return ready && token ? children : null;
 }

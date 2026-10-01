@@ -4,23 +4,12 @@ import Link from "next/link";
 import { useAuthStore } from "../../store/authStore";
 
 export function AccountHome() {
-  const user = useAuthStore((s) => s.user);
+  const firstName = useAuthStore((s) => s.user?.firstName);
   return (
     <div>
-      <h1 className="brand-serif" style={{ fontSize: "1.75rem" }}>
-        Hesabım
-      </h1>
-      <p style={{ color: "var(--muted)" }}>
-        Merhaba {user?.firstName}. Sipariş ve profil işlemlerini soldan yönet.
-      </p>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "0.75rem",
-          marginTop: "1rem",
-        }}
-      >
+      <h1 className="page-title">Hesabım</h1>
+      <p className="muted">Merhaba {firstName}. Sipariş ve profil işlemlerini menüden yönetebilirsin.</p>
+      <div className="actions">
         <Link href="/orders" className="btn btn-primary">
           Siparişlerim
         </Link>

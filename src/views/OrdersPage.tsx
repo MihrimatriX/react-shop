@@ -2,69 +2,48 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { api } from "../lib/api";
-import { userVisibleError } from "../lib/apiError";
-import { formatTry } from "../lib/format";
+import { api, unwrap } from "../lib/api";
+import { formatDate, formatTry, orderStatus } from "../lib/format";
 import { useAuthStore } from "../store/authStore";
 
-function statusColor(status: string): string {
-  const s = (status || "").toLowerCase();
-  if (s.includes("cancel")) return "var(--danger)";
-  if (s === "delivered") return "var(--ok, #15803d)";
-  if (s === "shipped" || s === "processing" || s === "pending")
-    return "var(--accent, #b45309)";
-  if (s === "returnrequested" || s.includes("return"))
-    return "var(--warning, #a16207)";
-  return "var(--muted)";
+export function StatusBadge({ status }: { status: string }) {
+  const s = orderStatus(status);
+  return <span className={`status status--${s.tone}`}>{s.label}</span>;
 }
 
 export function OrdersPage() {
-  const user = useAuthStore((s) => s.user)!;
+  const token = useAuthStore((s) => s.user!.token);
   const q = useQuery({
     queryKey: ["orders"],
-    queryFn: async () => {
-      const r = await api.orders.list(user.token);
-      if (!r.success) throw new Error(userVisibleError(r));
-      return r.data || [];
-    },
+    queryFn: () => api.orders.list(token).then(unwrap),
   });
 
   return (
-    <div className="container" style={{ paddingBlock: "2rem 3rem" }}>
-      <h1 className="brand-serif" style={{ fontSize: "1.75rem" }}>
-        Siparişlerim
-      </h1>
-      {q.isLoading ? <p>Yükleniyor…</p> : null}
-      {q.isError ? (
-        <p style={{ color: "var(--danger)" }}>{(q.error as Error).message}</p>
+    <div className="container page narrow">
+      <h1 className="page-title">Siparişlerim</h1>
+      {q.isLoading ? <p className="muted">Yükleniyor…</p> : null}
+      {q.isError ? <p className="error">{q.error.message}</p> : null}
+      {q.data?.length === 0 ? (
+        <p className="muted">
+          Henüz sipariş yok. <Link href="/shop">Alışverişe başla</Link>
+        </p>
       ) : null}
-      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-        {(q.data || []).map((o) => (
-          <li
-            key={o.id}
-            className="card"
-            style={{ padding: "1rem", marginBottom: "0.75rem" }}
-          >
-            <Link
-              href={`/orders/${o.id}`}
-              style={{ fontWeight: 600, color: "inherit" }}
-            >
-              {o.orderNumber}
-            </Link>
-            <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-              <span style={{ color: statusColor(o.status), fontWeight: 600 }}>
-                {o.status}
+      <ul className="list-plain">
+        {q.data?.map((o) => (
+          <li key={o.id}>
+            <Link href={`/orders/${o.id}`} className="card panel order-row">
+              <span>
+                <strong>{o.orderNumber}</strong>
+                <span className="muted small block">
+                  {formatDate(o.createdAt)} · {o.items.length} kalem
+                </span>
               </span>
-              {" · "}
-              {o.createdAt?.replace("T", " ").slice(0, 16)}
-            </div>
-            <div style={{ marginTop: 4 }}>
-              {formatTry(Number(o.totalAmount))}
-            </div>
+              <StatusBadge status={o.status} />
+              <strong>{formatTry(o.totalAmount)}</strong>
+            </Link>
           </li>
         ))}
       </ul>
-      {q.data && q.data.length === 0 ? <p>Henüz sipariş yok.</p> : null}
     </div>
   );
 }

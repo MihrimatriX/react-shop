@@ -1,357 +1,183 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "../lib/api";
-import { userVisibleError } from "../lib/apiError";
-import { formatTry } from "../lib/format";
+import { useState } from "react";
+import { api, unwrap } from "../lib/api";
+import { formatDate, formatTry } from "../lib/format";
 import { useAuthStore } from "../store/authStore";
-
-function fmtWhen(iso?: string | null) {
-  if (!iso) return "—";
-  return iso.replace("T", " ").slice(0, 16);
-}
-
-function statusTone(status: string): string {
-  const s = (status || "").toLowerCase();
-  if (s.includes("cancel")) return "var(--danger)";
-  if (s === "delivered") return "var(--ok, #15803d)";
-  if (s === "shipped" || s === "processing" || s === "pending")
-    return "var(--accent, #b45309)";
-  if (s === "returnrequested" || s.includes("return"))
-    return "var(--warning, #a16207)";
-  return "var(--muted)";
-}
+import type { ApiResponse, Order } from "../types/api";
+import { StatusBadge } from "./OrdersPage";
 
 export function OrderDetailPage() {
-  const params = useParams();
-  const oid = Number(params.id);
-  const user = useAuthStore((s) => s.user)!;
+  const oid = Number(useParams().id);
+  const token = useAuthStore((s) => s.user!.token);
   const qc = useQueryClient();
   const [cancelReason, setCancelReason] = useState("");
   const [returnReason, setReturnReason] = useState("");
 
   const q = useQuery({
     queryKey: ["order", oid],
-    queryFn: async () => {
-      const r = await api.orders.one(user.token, oid);
-      if (!r.success || !r.data) throw new Error(userVisibleError(r));
-      return r.data;
-    },
-    enabled: Number.isFinite(oid),
+    queryFn: () => api.orders.one(token, oid).then(unwrap),
   });
 
-  const cancelM = useMutation({
-    mutationFn: async () => {
-      const r = await api.orders.cancel(
-        user.token,
-        oid,
-        cancelReason || undefined,
-      );
-      if (!r.success) throw new Error(userVisibleError(r));
-      return r;
-    },
-    onSuccess: () => {
-      setCancelReason("");
-      qc.invalidateQueries({ queryKey: ["order", oid] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
+  // İptal / iade / demo adımı: hepsi güncel siparişi döndürür. Aynı anda tek aksiyon çalışır.
+  const action = useMutation({
+    mutationFn: (call: () => Promise<ApiResponse<Order>>) => call().then(unwrap),
+    onSuccess: (o) => {
+      qc.setQueryData(["order", oid], o);
+      void qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
+  const busy = action.isPending;
 
-  const returnM = useMutation({
-    mutationFn: async () => {
-      const r = await api.orders.returnRequest(
-        user.token,
-        oid,
-        returnReason.trim(),
-      );
-      if (!r.success) throw new Error(userVisibleError(r));
-      return r;
-    },
-    onSuccess: () => {
-      setReturnReason("");
-      qc.invalidateQueries({ queryKey: ["order", oid] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
-    },
-  });
-
-  const demoM = useMutation({
-    mutationFn: async () => {
-      const r = await api.orders.demoAdvanceFulfillment(user.token, oid);
-      if (!r.success) throw new Error(userVisibleError(r));
-      return r;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["order", oid] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
-    },
-  });
-
-  if (!Number.isFinite(oid)) return <p className="container">Geçersiz</p>;
-  if (q.isLoading) return <p className="container">Yükleniyor…</p>;
-  if (q.isError || !q.data) {
-    return (
-      <p className="container" style={{ color: "var(--danger)" }}>
-        {(q.error as Error)?.message || "Sipariş bulunamadı."}
-      </p>
-    );
-  }
+  if (q.isLoading) return <p className="container page muted">Yükleniyor…</p>;
+  if (!q.data) return <p className="container page error">{q.error?.message ?? "Sipariş bulunamadı."}</p>;
 
   const o = q.data;
-  const stNorm = (o.status || "").toLowerCase();
-  const nonCancelable = [
-    "shipped",
-    "delivered",
-    "returnrequested",
-    "cancelled",
-    "canceled",
-  ];
-  const canCancel = !nonCancelable.includes(stNorm);
-  const canRequestReturn = stNorm === "delivered";
-  const showDemoAdvance = o.demoNextAction === "DEMO_ADVANCE_FULFILLMENT";
+  const canCancel = o.status === "pending" || o.status === "processing";
+  const actionError = action.error;
 
   return (
-    <div className="container" style={{ paddingBlock: "2rem 3rem" }}>
-      <Link href="/orders" style={{ fontSize: "0.9rem" }}>
+    <div className="container page narrow">
+      <Link href="/orders" className="small">
         ← Siparişlere dön
       </Link>
-      <h1
-        className="brand-serif"
-        style={{ fontSize: "1.75rem", marginTop: "0.5rem" }}
-      >
-        {o.orderNumber}
-      </h1>
-      <p style={{ color: "var(--muted)" }}>
-        Durum:{" "}
-        <strong style={{ color: statusTone(o.status) }}>{o.status}</strong>
-        {o.createdAt ? (
-          <span style={{ marginLeft: "0.5rem" }}>
-            · Oluşturulma: {fmtWhen(o.createdAt)}
-          </span>
-        ) : null}
+      <h1 className="page-title">{o.orderNumber}</h1>
+      <p className="muted">
+        <StatusBadge status={o.status} /> · {formatDate(o.createdAt)}
       </p>
+      {actionError ? <p className="error">{actionError.message}</p> : null}
 
-      {(o.trackingNumber ||
-        o.carrier ||
-        o.shippedAt ||
-        o.estimatedDeliveryAt) && (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>
-            Kargo / teslimat
-          </h2>
-          <ul
-            style={{
-              margin: 0,
-              paddingLeft: "1.1rem",
-              color: "var(--muted)",
-              fontSize: "0.95rem",
-            }}
-          >
-            {o.carrier ? <li>Taşıyıcı: {o.carrier}</li> : null}
-            {o.trackingNumber ? <li>Takip no: {o.trackingNumber}</li> : null}
-            {o.shippedAt ? (
-              <li>Kargoya verildi: {fmtWhen(o.shippedAt)}</li>
-            ) : null}
-            {o.estimatedDeliveryAt ? (
-              <li>Tahmini teslim: {fmtWhen(o.estimatedDeliveryAt)}</li>
-            ) : null}
-          </ul>
-        </div>
-      )}
-
-      {o.cancelReason ? (
-        <p
-          style={{
-            color: "var(--muted)",
-            fontSize: "0.9rem",
-            marginTop: "0.75rem",
-          }}
-        >
-          İptal notu: {o.cancelReason}
-        </p>
-      ) : null}
-      {(o.returnReason || o.returnRequestedAt) && (
-        <p
-          style={{
-            color: "var(--muted)",
-            fontSize: "0.9rem",
-            marginTop: "0.25rem",
-          }}
-        >
-          İade talebi
-          {o.returnRequestedAt ? ` (${fmtWhen(o.returnRequestedAt)})` : ""}:{" "}
-          {o.returnReason || "—"}
-        </p>
-      )}
-
-      {o.shippingAddress ? (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>
-            Teslimat adresi
-          </h2>
-          <div>
-            {o.shippingAddress.fullAddress}, {o.shippingAddress.district}/
-            {o.shippingAddress.city}
-          </div>
-        </div>
+      {o.carrier ? (
+        <section className="card panel">
+          <h2>Kargo / teslimat</h2>
+          <dl className="facts">
+            <dt>Taşıyıcı</dt>
+            <dd>{o.carrier}</dd>
+            <dt>Takip no</dt>
+            <dd>{o.trackingNumber ?? "—"}</dd>
+            <dt>Kargoya verildi</dt>
+            <dd>{formatDate(o.shippedAt)}</dd>
+            <dt>Tahmini teslim</dt>
+            <dd>{formatDate(o.estimatedDeliveryAt)}</dd>
+          </dl>
+        </section>
       ) : null}
 
-      {o.paymentMethod ? (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>Ödeme</h2>
-          <div style={{ color: "var(--muted)" }}>
-            {o.paymentMethod.type} · {o.paymentMethod.cardNumber}
-          </div>
-        </div>
+      {o.cancelReason || o.returnReason || o.notes ? (
+        <section className="card panel">
+          {o.notes ? <p>Sipariş notu: {o.notes}</p> : null}
+          {o.cancelReason ? <p>İptal nedeni: {o.cancelReason}</p> : null}
+          {o.returnReason ? (
+            <p>
+              İade talebi ({formatDate(o.returnRequestedAt)}): {o.returnReason}
+            </p>
+          ) : null}
+        </section>
       ) : null}
 
-      <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-        <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.05rem" }}>Kalemler</h2>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <section className="card panel">
+        <h2>Kalemler</h2>
+        <table className="items-table">
           <tbody>
             {o.items.map((it) => (
-              <tr
-                key={`${it.productId}-${it.quantity}`}
-                style={{ borderBottom: "1px solid var(--line)" }}
-              >
-                <td style={{ padding: "0.5rem 0" }}>{it.productName}</td>
-                <td>{it.quantity} ad.</td>
-                <td style={{ textAlign: "right" }}>
-                  {formatTry(Number(it.totalPrice))}
+              <tr key={it.productId}>
+                <td>
+                  <Link href={`/product/${it.productId}`}>{it.productName}</Link>
                 </td>
+                <td>{it.quantity} ad.</td>
+                <td>{formatTry(it.totalPrice)}</td>
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={2}>Toplam</td>
+              <td>{formatTry(o.totalAmount)}</td>
+            </tr>
+          </tfoot>
         </table>
-        <div
-          style={{
-            textAlign: "right",
-            marginTop: "0.75rem",
-            fontSize: "1.15rem",
-          }}
-        >
-          <strong>{formatTry(Number(o.totalAmount))}</strong>
-        </div>
-      </div>
+      </section>
 
-      {showDemoAdvance ? (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>
-            Demo: lojistik adımı
-          </h2>
-          <p
-            style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 0 }}
-          >
-            Geliştirme ortamında siparişi bir sonraki aşamaya (hazırlanıyor →
-            kargoda → teslim) taşır.
-          </p>
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={demoM.isPending}
-            onClick={() => demoM.mutate()}
-          >
-            {demoM.isPending ? "İşleniyor…" : "Sonraki lojistik adımı"}
-          </button>
-          {demoM.isError ? (
-            <p
-              style={{
-                color: "var(--danger)",
-                marginBottom: 0,
-                marginTop: "0.5rem",
-              }}
-            >
-              {(demoM.error as Error).message}
+      {o.shippingAddress || o.paymentMethod ? (
+        <section className="card panel">
+          <h2>Teslimat ve ödeme</h2>
+          {o.shippingAddress ? (
+            <p>
+              {o.shippingAddress.fullAddress}, {o.shippingAddress.district}/{o.shippingAddress.city}
             </p>
           ) : null}
-        </div>
+          {o.paymentMethod ? <p className="muted">{o.paymentMethod.cardNumber}</p> : null}
+        </section>
+      ) : null}
+
+      {o.demoNextAction === "DEMO_ADVANCE_FULFILLMENT" ? (
+        <section className="card panel">
+          <h2>Demo: lojistik adımı</h2>
+          <p className="muted small">Siparişi bir sonraki aşamaya taşır (hazırlanıyor → kargoda → teslim edildi).</p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => action.mutate(() => api.orders.demoAdvanceFulfillment(token, oid))}
+          >
+            Sonraki lojistik adımı
+          </button>
+        </section>
       ) : null}
 
       {canCancel ? (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>
-            Siparişi iptal et
-          </h2>
+        <section className="card panel form-grid">
+          <h2>Siparişi iptal et</h2>
           <textarea
             className="input"
             rows={2}
+            maxLength={500}
             value={cancelReason}
             onChange={(e) => setCancelReason(e.target.value)}
             placeholder="İsteğe bağlı iptal nedeni"
-            maxLength={500}
           />
           <button
             type="button"
             className="btn btn-ghost"
-            style={{ marginTop: "0.75rem" }}
-            disabled={cancelM.isPending}
+            disabled={busy}
             onClick={() => {
-              if (confirm("Siparişi iptal etmek istiyor musunuz?"))
-                cancelM.mutate();
+              if (confirm("Siparişi iptal etmek istiyor musunuz?")) {
+                action.mutate(() => api.orders.cancel(token, oid, cancelReason.trim() || undefined));
+              }
             }}
           >
-            {cancelM.isPending ? "İptal ediliyor…" : "İptali onayla"}
+            İptali onayla
           </button>
-          {cancelM.isError ? (
-            <p
-              style={{
-                color: "var(--danger)",
-                marginBottom: 0,
-                marginTop: "0.5rem",
-              }}
-            >
-              {(cancelM.error as Error).message}
-            </p>
-          ) : null}
-        </div>
+        </section>
       ) : null}
 
-      {canRequestReturn ? (
-        <div className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem" }}>
-            İade talebi
-          </h2>
-          <p
-            style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 0 }}
-          >
-            Teslim edilmiş siparişler için iade sürecini başlatır.
-          </p>
+      {o.status === "delivered" ? (
+        <section className="card panel form-grid">
+          <h2>İade talebi</h2>
           <textarea
             className="input"
             rows={3}
+            maxLength={500}
             value={returnReason}
             onChange={(e) => setReturnReason(e.target.value)}
             placeholder="İade nedeni (zorunlu)"
-            maxLength={500}
-            required
           />
           <button
             type="button"
-            className="btn btn-accent"
-            style={{ marginTop: "0.75rem" }}
-            disabled={returnM.isPending || returnReason.trim().length === 0}
+            className="btn btn-primary"
+            disabled={busy || !returnReason.trim()}
             onClick={() => {
-              if (!returnReason.trim()) return;
-              if (confirm("İade talebini göndermek istiyor musunuz?"))
-                returnM.mutate();
+              if (confirm("İade talebini göndermek istiyor musunuz?")) {
+                action.mutate(() => api.orders.returnRequest(token, oid, returnReason.trim()));
+              }
             }}
           >
-            {returnM.isPending ? "Gönderiliyor…" : "İade talebi oluştur"}
+            İade talebi oluştur
           </button>
-          {returnM.isError ? (
-            <p
-              style={{
-                color: "var(--danger)",
-                marginBottom: 0,
-                marginTop: "0.5rem",
-              }}
-            >
-              {(returnM.error as Error).message}
-            </p>
-          ) : null}
-        </div>
+        </section>
       ) : null}
     </div>
   );

@@ -2,7 +2,6 @@ import { ImageResponse } from "next/og";
 import { PRODUCTS } from "@/server/catalog";
 import { formatTry } from "@/lib/format";
 import { SITE_NAME } from "@/lib/site";
-import { unitPriceAfterDiscount } from "@/store/cartStore";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -17,7 +16,7 @@ export default async function ProductOgImage({
   const p = PRODUCTS.find((x) => x.id === Number(id));
   const name = p?.productName ?? "Ürün";
   const cat = p?.categoryName ?? SITE_NAME;
-  const price = p ? formatTry(unitPriceAfterDiscount(p)) : "";
+  const price = p ? formatTry(p.price) : "";
 
   return new ImageResponse(
     (

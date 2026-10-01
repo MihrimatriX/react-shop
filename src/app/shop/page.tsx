@@ -60,8 +60,8 @@ export default async function Page({
   return (
     <>
       <JsonLd data={shopJsonLd(cat)} />
-      <Suspense fallback={<p className="container">Yükleniyor…</p>}>
-        <ShopPage />
+      <Suspense>
+        <ShopPage categories={CATEGORIES} />
       </Suspense>
     </>
   );

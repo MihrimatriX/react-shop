@@ -50,52 +50,6 @@ function money(seed: number, min: number, max: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function buildProducts(): Product[] {
-  const out: Product[] = [];
-  let id = 1;
-  for (const cat of CATEGORIES) {
-    const def = CATALOG[cat.id - 1];
-    for (let i = 0; i < 24; i++) {
-      const brand = def.brands[i % def.brands.length];
-      const item = def.items[i % def.items.length];
-      const variant = i >= def.items.length ? ` ${["Siyah", "Beyaz", "Lacivert", "Gri", "Kırmızı", "Lacivert-2"][i % 6]}` : "";
-      const seed = id * 9973 + cat.id * 13;
-      const discountRoll = rnd(seed + 3);
-      const discount =
-        discountRoll > 0.72 ? Math.round(5 + rnd(seed + 4) * 40) : 0;
-      const stockRoll = rnd(seed + 5);
-      out.push({
-        id,
-        productName: `${brand} ${item}${variant}`,
-        unitPrice: money(seed, def.min, def.max),
-        unitInStock: stockRoll > 0.92 ? 0 : Math.floor(4 + rnd(seed + 6) * 180),
-        quantityPerUnit: def.qty[0],
-        categoryId: cat.id,
-        categoryName: cat.categoryName,
-        description: `${brand} ${item} — KapıdaMart seçkisi. Hızlı kargo, 14 gün iade. ${cat.description}.`,
-        imageUrl: `https://picsum.photos/seed/p${id}/600/600`,
-        discount,
-        isActive: true,
-      });
-      id += 1;
-    }
-  }
-  return out;
-}
-
-export const PRODUCTS: Product[] = buildProducts();
-
-export const CAMPAIGNS: Campaign[] = [
-  { id: 1, title: "Elektronikte süper fiyat", subtitle: "Seçili TV ve ses sistemlerinde", discount: 25, imageUrl: "https://picsum.photos/seed/camp1/800/400", buttonText: "İncele", buttonHref: "/shop?categoryId=1", isActive: true, timeLeft: "2 gün" },
-  { id: 2, title: "Moda haftası", subtitle: "Giyimde %40'a varan indirim", discount: 40, imageUrl: "https://picsum.photos/seed/camp2/800/400", buttonText: "Alışverişe başla", buttonHref: "/shop?categoryId=2", isActive: true },
-  { id: 3, title: "Ev & yaşam", subtitle: "Mutfak ve tekstilde fırsat", discount: 20, imageUrl: "https://picsum.photos/seed/camp3/800/400", buttonText: "Keşfet", buttonHref: "/shop?categoryId=11", isActive: true },
-  { id: 4, title: "Kozmetik fest", subtitle: "Cilt bakımında 3 al 2 öde", discount: 30, imageUrl: "https://picsum.photos/seed/camp4/800/400", buttonText: "Ürünleri gör", buttonHref: "/shop?categoryId=14", isActive: true },
-  { id: 5, title: "Süpermarket sepeti", subtitle: "250 ₺ üzeri kargo bedava", discount: 15, imageUrl: "https://picsum.photos/seed/camp5/800/400", buttonText: "Doldur", buttonHref: "/shop?categoryId=15", isActive: true },
-  { id: 6, title: "Spor & outdoor", subtitle: "Fitness ekipmanlarında indirim", discount: 18, imageUrl: "https://picsum.photos/seed/camp6/800/400", buttonText: "İncele", buttonHref: "/shop?categoryId=12", isActive: true },
-  { id: 7, title: "Telefon günleri", subtitle: "Akıllı saat ve kulaklık hediye fırsatı", discount: 12, imageUrl: "https://picsum.photos/seed/camp7/800/400", buttonText: "Telefonlar", buttonHref: "/shop?categoryId=9", isActive: true },
-  { id: 8, title: "Anne & bebek", subtitle: "Bebek bezinde koli fiyatı", discount: 22, imageUrl: "https://picsum.photos/seed/camp8/800/400", buttonText: "Alışveriş", buttonHref: "/shop?categoryId=13", isActive: true },
-];
-
 const REVIEW_TEXTS = [
   { title: "Beklediğim gibi", comment: "Kargo hızlı geldi, ürün açıklamayla uyumlu." },
   { title: "Fiyat/performans", comment: "Bu fiyata gayet yeterli, tavsiye ederim." },
@@ -125,6 +79,62 @@ export function reviewsForProduct(productId: number): Review[] {
   return out;
 }
 
+export function averageRating(reviews: Review[]): number {
+  if (!reviews.length) return 0;
+  return Math.round((reviews.reduce((a, r) => a + r.rating, 0) / reviews.length) * 10) / 10;
+}
+
+function buildProducts(): Product[] {
+  const out: Product[] = [];
+  let id = 1;
+  for (const cat of CATEGORIES) {
+    const def = CATALOG[cat.id - 1];
+    for (let i = 0; i < 24; i++) {
+      const brand = def.brands[i % def.brands.length];
+      const item = def.items[i % def.items.length];
+      const variant = i >= def.items.length ? ` ${["Siyah", "Beyaz", "Lacivert", "Gri", "Kırmızı", "Lacivert-2"][i % 6]}` : "";
+      const seed = id * 9973 + cat.id * 13;
+      const discountRoll = rnd(seed + 3);
+      const discount =
+        discountRoll > 0.72 ? Math.round(5 + rnd(seed + 4) * 40) : 0;
+      const stockRoll = rnd(seed + 5);
+      const unitPrice = money(seed, def.min, def.max);
+      const reviews = reviewsForProduct(id);
+      out.push({
+        id,
+        productName: `${brand} ${item}${variant}`,
+        unitPrice,
+        price: Math.round(unitPrice * (100 - discount)) / 100,
+        rating: averageRating(reviews),
+        reviewCount: reviews.length,
+        unitInStock: stockRoll > 0.92 ? 0 : Math.floor(4 + rnd(seed + 6) * 180),
+        quantityPerUnit: def.qty[0],
+        categoryId: cat.id,
+        categoryName: cat.categoryName,
+        description: `${brand} ${item} — KapıdaMart seçkisi. Hızlı kargo, 14 gün iade. ${cat.description}.`,
+        imageUrl: `https://picsum.photos/seed/p${id}/600/600`,
+        discount,
+        isActive: true,
+      });
+      id += 1;
+    }
+  }
+  return out;
+}
+
+export const PRODUCTS: Product[] = buildProducts();
+
+export const CAMPAIGNS: Campaign[] = [
+  { id: 1, title: "Elektronikte süper fiyat", subtitle: "Seçili TV ve ses sistemlerinde", discount: 25, imageUrl: "https://picsum.photos/seed/camp1/800/400", buttonText: "İncele", buttonHref: "/shop?categoryId=1", isActive: true, timeLeft: "2 gün" },
+  { id: 2, title: "Moda haftası", subtitle: "Giyimde %40'a varan indirim", discount: 40, imageUrl: "https://picsum.photos/seed/camp2/800/400", buttonText: "Alışverişe başla", buttonHref: "/shop?categoryId=2", isActive: true },
+  { id: 3, title: "Ev & yaşam", subtitle: "Mutfak ve tekstilde fırsat", discount: 20, imageUrl: "https://picsum.photos/seed/camp3/800/400", buttonText: "Keşfet", buttonHref: "/shop?categoryId=11", isActive: true },
+  { id: 4, title: "Kozmetik fest", subtitle: "Cilt bakımında 3 al 2 öde", discount: 30, imageUrl: "https://picsum.photos/seed/camp4/800/400", buttonText: "Ürünleri gör", buttonHref: "/shop?categoryId=14", isActive: true },
+  { id: 5, title: "Süpermarket sepeti", subtitle: "250 ₺ üzeri kargo bedava", discount: 15, imageUrl: "https://picsum.photos/seed/camp5/800/400", buttonText: "Doldur", buttonHref: "/shop?categoryId=15", isActive: true },
+  { id: 6, title: "Spor & outdoor", subtitle: "Fitness ekipmanlarında indirim", discount: 18, imageUrl: "https://picsum.photos/seed/camp6/800/400", buttonText: "İncele", buttonHref: "/shop?categoryId=12", isActive: true },
+  { id: 7, title: "Telefon günleri", subtitle: "Akıllı saat ve kulaklık hediye fırsatı", discount: 12, imageUrl: "https://picsum.photos/seed/camp7/800/400", buttonText: "Telefonlar", buttonHref: "/shop?categoryId=9", isActive: true },
+  { id: 8, title: "Anne & bebek", subtitle: "Bebek bezinde koli fiyatı", discount: 22, imageUrl: "https://picsum.photos/seed/camp8/800/400", buttonText: "Alışveriş", buttonHref: "/shop?categoryId=13", isActive: true },
+];
+
 export type ProductQuery = {
   pageNumber: number;
   pageSize: number;
@@ -148,27 +158,21 @@ export function filterProducts(all: Product[], q: ProductQuery): Product[] {
         (p.categoryName || "").toLowerCase().includes(s),
     );
   }
-  if (q.minPrice != null) rows = rows.filter((p) => p.unitPrice >= q.minPrice!);
-  if (q.maxPrice != null) rows = rows.filter((p) => p.unitPrice <= q.maxPrice!);
+  // Kullanıcı ekranda indirimli fiyatı görür; filtre ve sıralama da onu kullanır.
+  if (q.minPrice != null) rows = rows.filter((p) => p.price >= q.minPrice!);
+  if (q.maxPrice != null) rows = rows.filter((p) => p.price <= q.maxPrice!);
   const dir = q.sortOrder === "desc" ? -1 : 1;
-  rows = [...rows].sort((a, b) => {
-    let av: string | number = a.id;
-    let bv: string | number = b.id;
-    if (q.sortBy === "productName") {
-      av = a.productName;
-      bv = b.productName;
-    } else if (q.sortBy === "unitPrice") {
-      av = a.unitPrice;
-      bv = b.unitPrice;
-    } else if (q.sortBy === "discount") {
-      av = a.discount ?? 0;
-      bv = b.discount ?? 0;
-    }
-    if (av < bv) return -1 * dir;
-    if (av > bv) return 1 * dir;
-    return 0;
+  const key = (p: Product): string | number =>
+    q.sortBy === "productName" ? p.productName
+    : q.sortBy === "price" ? p.price
+    : q.sortBy === "discount" ? (p.discount ?? 0)
+    : p.id;
+  return rows.sort((a, b) => {
+    const av = key(a);
+    const bv = key(b);
+    const c = typeof av === "string" ? av.localeCompare(String(bv), "tr") : av - Number(bv);
+    return c * dir;
   });
-  return rows;
 }
 
 export function paginate<T>(rows: T[], pageNumber: number, pageSize: number) {

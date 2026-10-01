@@ -1,15 +1,12 @@
-"use client";
-
-import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { api } from "../lib/api";
 import { ProductCard } from "../components/ProductCard";
+import { db } from "../server/store";
 
 const HERO = [
   {
     title: "Elektronikte süper fiyatlar",
-    sub: "Telefon, bilgisayar ve aksesuarlarda seçili ürünlerde ekstra indirim.",
-    href: "/shop?categoryId=9",
+    sub: "TV, ses sistemi ve aksesuarlarda seçili ürünlerde ekstra indirim.",
+    href: "/shop?categoryId=1",
     bg: "https://picsum.photos/seed/heroel/1200/400",
   },
   {
@@ -27,74 +24,44 @@ const HERO = [
 ];
 
 const QUICK_CATS = [
-  { emoji: "📱", label: "Telefon", href: "/shop?q=telefon" },
-  { emoji: "💻", label: "Bilgisayar", href: "/shop?q=laptop" },
-  { emoji: "👟", label: "Ayakkabı", href: "/shop?categoryId=10" },
-  { emoji: "🏠", label: "Ev", href: "/shop?categoryId=11" },
-  { emoji: "🍼", label: "Anne & bebek", href: "/shop?categoryId=13" },
-  { emoji: "🛒", label: "Süpermarket", href: "/shop?categoryId=15" },
-  { emoji: "🚗", label: "Oto", href: "/shop?categoryId=17" },
-  { emoji: "⚽", label: "Spor", href: "/shop?categoryId=12" },
+  { emoji: "📱", label: "Telefon", id: 9 },
+  { emoji: "📺", label: "Elektronik", id: 1 },
+  { emoji: "👟", label: "Ayakkabı", id: 10 },
+  { emoji: "🏠", label: "Ev", id: 11 },
+  { emoji: "🍼", label: "Anne & bebek", id: 13 },
+  { emoji: "🛒", label: "Süpermarket", id: 15 },
+  { emoji: "🚗", label: "Oto", id: 17 },
+  { emoji: "⚽", label: "Spor", id: 12 },
 ];
 
+const TRUST = [
+  ["🚚", "250 ₺ üzeri kargo bedava*"],
+  ["🔒", "256 bit SSL güvenli ödeme"],
+  ["↩️", "14 gün içinde kolay iade*"],
+  ["⭐", "Onaylı müşteri yorumları"],
+];
+
+const FLASH = "/shop?sortBy=discount&sortOrder=desc";
+
 export function HomePage() {
-  const campaigns = useQuery({
-    queryKey: ["campaigns", "active"],
-    queryFn: async () => {
-      const r = await api.campaigns.active();
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
-    },
-  });
-  const featured = useQuery({
-    queryKey: ["products", "featured"],
-    queryFn: async () => {
-      const r = await api.products.featured();
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
-    },
-  });
-  const discounted = useQuery({
-    queryKey: ["products", "discounted"],
-    queryFn: async () => {
-      const r = await api.products.discounted();
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
-    },
-  });
+  const campaigns = db.campaigns();
 
   return (
-    <div>
+    <>
       <div className="container">
         <div className="trust-strip">
-          <div className="trust-item">
-            <span className="trust-icon">🚚</span>
-            <span>250 ₺ üzeri kargo bedava*</span>
-          </div>
-          <div className="trust-item">
-            <span className="trust-icon">🔒</span>
-            <span>256 bit SSL güvenli ödeme</span>
-          </div>
-          <div className="trust-item">
-            <span className="trust-icon">↩️</span>
-            <span>14 gün içinde kolay iade*</span>
-          </div>
-          <div className="trust-item">
-            <span className="trust-icon">⭐</span>
-            <span>Onaylı müşteri yorumları</span>
-          </div>
+          {TRUST.map(([icon, label]) => (
+            <div key={label} className="trust-item">
+              <span className="trust-icon">{icon}</span>
+              <span>{label}</span>
+            </div>
+          ))}
         </div>
-      </div>
 
-      <div className="container">
         <div className="hero-carousel">
           {HERO.map((h) => (
             <Link key={h.title} href={h.href} className="hero-slide">
-              <div
-                className="hero-slide__bg"
-                style={{ backgroundImage: `url(${h.bg})` }}
-              />
-              <div className="hero-slide__overlay" />
+              <div className="hero-slide__bg" style={{ backgroundImage: `url(${h.bg})` }} />
               <div className="hero-slide__content">
                 <h2>{h.title}</h2>
                 <p>{h.sub}</p>
@@ -105,85 +72,43 @@ export function HomePage() {
         </div>
       </div>
 
-      <section className="container section" style={{ paddingTop: "0.5rem" }}>
+      <section className="container section">
         <div className="section-head">
           <h2 className="section-title">Popüler kategoriler</h2>
           <Link href="/shop" className="section-link">
             Tümünü gör
           </Link>
         </div>
-        <div className="h-scroll" style={{ gap: "0.85rem" }}>
+        <div className="h-scroll">
           {QUICK_CATS.map((c) => (
-            <Link
-              key={c.label}
-              href={c.href}
-              className="card"
-              style={{
-                flex: "0 0 auto",
-                width: 96,
-                padding: "0.85rem 0.5rem",
-                textAlign: "center",
-                textDecoration: "none",
-                color: "inherit",
-                border: "1px solid var(--line)",
-              }}
-            >
-              <div style={{ fontSize: "1.75rem", marginBottom: 6 }}>
-                {c.emoji}
-              </div>
-              <div
-                style={{
-                  fontSize: "0.72rem",
-                  fontWeight: 700,
-                  lineHeight: 1.2,
-                }}
-              >
-                {c.label}
-              </div>
+            <Link key={c.id} href={`/shop?categoryId=${c.id}`} className="quick-cat">
+              <span className="quick-cat__icon">{c.emoji}</span>
+              {c.label}
             </Link>
           ))}
         </div>
       </section>
 
-      {campaigns.data && campaigns.data.length > 0 ? (
-        <section className="container section">
-          <div className="section-head">
-            <h2 className="section-title">Kampanyalar</h2>
-            <Link
-              href="/shop?sortBy=discount&sortOrder=desc"
-              className="section-link"
-            >
-              Tüm fırsatlar
+      <section id="kampanyalar" className="container section">
+        <div className="section-head">
+          <h2 className="section-title">Kampanyalar</h2>
+          <Link href={FLASH} className="section-link">
+            Tüm fırsatlar
+          </Link>
+        </div>
+        <div className="h-scroll">
+          {campaigns.map((c) => (
+            <Link key={c.id} href={c.buttonHref ?? "/shop"} className="campaign-card">
+              <div className="campaign-card__img" style={{ backgroundImage: `url(${c.imageUrl})` }} />
+              <div className="campaign-card__body">
+                {c.discount ? <span className="badge">%{c.discount} indirim</span> : null}
+                <h3>{c.title}</h3>
+                <p>{c.subtitle}</p>
+              </div>
             </Link>
-          </div>
-          <div className="h-scroll">
-            {campaigns.data.map((c) => (
-              <Link
-                key={c.id}
-                href={c.buttonHref?.startsWith("/") ? c.buttonHref : "/shop"}
-                className="campaign-card"
-              >
-                <div
-                  className="campaign-card__img"
-                  style={{ backgroundImage: `url(${c.imageUrl || ""})` }}
-                />
-                <div className="campaign-card__body">
-                  {c.discount != null ? (
-                    <span
-                      className="badge"
-                      style={{ marginBottom: 6, display: "inline-block" }}
-                    >
-                      %{c.discount} indirim
-                    </span>
-                  ) : null}
-                  <h3>{c.title}</h3>
-                  <p>{c.subtitle || c.description?.slice(0, 80)}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      ) : null}
+          ))}
+        </div>
+      </section>
 
       <section className="container section">
         <div className="section-head">
@@ -192,73 +117,29 @@ export function HomePage() {
             Daha fazla ürün
           </Link>
         </div>
-        <p
-          style={{
-            color: "var(--ink-muted)",
-            fontSize: "0.85rem",
-            margin: "-0.5rem 0 1rem",
-          }}
-        >
-          Yüksek puanlı ve indirimli ürünler — öne çıkan raf.
-        </p>
-        {featured.isLoading ? (
-          <div className="grid-products">
-            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-              <div key={i} className="skeleton" style={{ height: 340 }} />
-            ))}
-          </div>
-        ) : (
-          <div className="grid-products">
-            {(featured.data || []).slice(0, 12).map((p) => (
-              <ProductCard key={p.id} product={p} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section
-        className="container section"
-        style={{
-          background: "var(--market-soft)",
-          marginBottom: "2rem",
-          paddingBlock: "2rem",
-          borderRadius: "var(--radius-lg)",
-        }}
-      >
-        <div className="section-head">
-          <h2 className="section-title">🔥 Flaş indirimler</h2>
-          <Link
-            href="/shop?sortBy=discount&sortOrder=desc"
-            className="section-link"
-          >
-            Tümünü gör
-          </Link>
+        <div className="grid-products">
+          {db.featured().slice(0, 12).map((p) => (
+            <ProductCard key={p.id} product={p} />
+          ))}
         </div>
-        {discounted.isLoading ? (
-          <div className="grid-products">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="skeleton" style={{ height: 320 }} />
-            ))}
+      </section>
+
+      <section className="container">
+        <div className="section section--soft">
+          <div className="section-head">
+            <h2 className="section-title">🔥 Flaş indirimler</h2>
+            <Link href={FLASH} className="section-link">
+              Tümünü gör
+            </Link>
           </div>
-        ) : (
           <div className="grid-products">
-            {(discounted.data || []).slice(0, 10).map((p) => (
+            {db.discounted().slice(0, 10).map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
           </div>
-        )}
+        </div>
+        <p className="footnote">* Kampanya ve kargo koşulları demo amaçlıdır.</p>
       </section>
-
-      <p
-        className="container"
-        style={{
-          fontSize: "0.7rem",
-          color: "var(--ink-muted)",
-          marginBottom: "2rem",
-        }}
-      >
-        * Kampanya ve kargo koşulları satıcı / demo ortamına göre değişebilir.
-      </p>
-    </div>
+    </>
   );
 }

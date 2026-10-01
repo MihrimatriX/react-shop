@@ -39,7 +39,7 @@ export default async function Page({ params }: Props) {
   return (
     <>
       <JsonLd data={productJsonLd(p)} />
-      <ProductPage />
+      <ProductPage initial={p} />
     </>
   );
 }

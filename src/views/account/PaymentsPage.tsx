@@ -1,149 +1,94 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { api } from "../../lib/api";
+import type { FormEvent } from "react";
+import { api, unwrap } from "../../lib/api";
 import { useAuthStore } from "../../store/authStore";
+
+const thisYear = new Date().getFullYear();
 
 export function PaymentsPage() {
   const user = useAuthStore((s) => s.user)!;
   const qc = useQueryClient();
-  const [form, setForm] = useState({
-    type: "CREDIT_CARD",
-    cardHolderName: "",
-    cardNumber: "",
-    expiryMonth: 12,
-    expiryYear: 2028,
-    cvv: "000",
-    isDefault: true,
-  });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["payments"] });
 
   const q = useQuery({
-    queryKey: ["payments", user.userId],
-    queryFn: async () => {
-      const r = await api.payments.list(user.token, user.userId);
-      if (!r.success) throw new Error(r.message);
-      return r.data || [];
-    },
+    queryKey: ["payments"],
+    queryFn: () => api.payments.list(user.token, user.userId).then(unwrap),
   });
 
+  // Kayıtlı kartta CVV tutulmaz; form CVV istemez.
   const create = useMutation({
-    mutationFn: async () => {
-      const r = await api.payments.create(user.token, form);
-      if (!r.success) throw new Error(r.message || r.error);
-      return r.data;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["payments", user.userId] });
-      setForm((f) => ({ ...f, cardNumber: "", cardHolderName: "" }));
-    },
+    mutationFn: (fd: FormData) =>
+      api.payments
+        .create(user.token, {
+          cardHolderName: fd.get("cardHolderName"),
+          cardNumber: fd.get("cardNumber"),
+          expiryMonth: Number(fd.get("expiryMonth")),
+          expiryYear: Number(fd.get("expiryYear")),
+          isDefault: fd.get("isDefault") === "on",
+        })
+        .then(unwrap),
+    onSuccess: refresh,
   });
 
   const del = useMutation({
-    mutationFn: (id: number) => api.payments.delete(user.token, id),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["payments", user.userId] }),
+    mutationFn: (id: number) => api.payments.delete(user.token, id).then(unwrap),
+    onSuccess: refresh,
   });
+
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    create.mutate(new FormData(form), { onSuccess: () => form.reset() });
+  }
 
   return (
     <div>
-      <h1 className="brand-serif" style={{ fontSize: "1.5rem" }}>
-        Ödeme yöntemleri
-      </h1>
-      <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-        Demo ortamı — gerçek kart bilgisi kullanmayın.
-      </p>
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {(q.data || []).map((p) => (
-          <li
-            key={p.id}
-            className="card"
-            style={{ padding: "1rem", marginBottom: "0.75rem" }}
-          >
-            <strong>{p.type}</strong> {p.cardNumber}{" "}
-            {p.isDefault ? <span className="badge">varsayılan</span> : null}
-            <div style={{ fontSize: "0.9rem", color: "var(--muted)" }}>
-              {p.cardHolderName}
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ marginTop: 8, fontSize: "0.8rem" }}
-              onClick={() => del.mutate(p.id)}
-            >
+      <h1 className="page-title">Ödeme yöntemleri</h1>
+      <p className="notice">Demo ortamı — gerçek kart bilgisi girmeyin.</p>
+      <ul className="list-plain">
+        {q.data?.map((p) => (
+          <li key={p.id} className="card panel row-between">
+            <span>
+              {p.cardNumber} {p.isDefault ? <span className="badge">varsayılan</span> : null}
+              <span className="muted small block">
+                {p.cardHolderName} · {String(p.expiryMonth).padStart(2, "0")}/{p.expiryYear}
+              </span>
+            </span>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={del.isPending} onClick={() => del.mutate(p.id)}>
               Sil
             </button>
           </li>
         ))}
       </ul>
 
-      <h2 style={{ fontSize: "1.1rem" }}>Yeni kart</h2>
-      <form
-        className="card"
-        style={{
-          padding: "1rem",
-          display: "grid",
-          gap: "0.5rem",
-          maxWidth: 480,
-        }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate();
-        }}
-      >
-        <input
-          className="input"
-          required
-          placeholder="Kart üzerindeki isim"
-          value={form.cardHolderName}
-          onChange={(e) => setForm({ ...form, cardHolderName: e.target.value })}
-        />
-        <input
-          className="input"
-          required
-          placeholder="Kart numarası"
-          maxLength={20}
-          value={form.cardNumber}
-          onChange={(e) => setForm({ ...form, cardNumber: e.target.value })}
-        />
-        <div className="form-3col">
-          <input
-            className="input"
-            type="number"
-            min={1}
-            max={12}
-            value={form.expiryMonth}
-            onChange={(e) =>
-              setForm({ ...form, expiryMonth: Number(e.target.value) })
-            }
-          />
-          <input
-            className="input"
-            type="number"
-            min={2026}
-            max={2050}
-            value={form.expiryYear}
-            onChange={(e) =>
-              setForm({ ...form, expiryYear: Number(e.target.value) })
-            }
-          />
-          <input
-            className="input"
-            placeholder="CVV"
-            value={form.cvv}
-            onChange={(e) => setForm({ ...form, cvv: e.target.value })}
-          />
+      <h2>Yeni kart</h2>
+      <form className="card panel form-grid narrow-form" onSubmit={onSubmit}>
+        <label>
+          Kart üzerindeki isim
+          <input className="input" name="cardHolderName" autoComplete="off" required />
+        </label>
+        <label>
+          Kart numarası
+          <input className="input" name="cardNumber" inputMode="numeric" autoComplete="off" minLength={12} maxLength={23} required />
+        </label>
+        <div className="form-2col">
+          <label>
+            Ay
+            <input className="input" name="expiryMonth" type="number" min={1} max={12} defaultValue={12} required />
+          </label>
+          <label>
+            Yıl
+            <input className="input" name="expiryYear" type="number" min={thisYear} max={thisYear + 20} defaultValue={thisYear + 2} required />
+          </label>
         </div>
-        {create.isError ? (
-          <p style={{ color: "var(--danger)", margin: 0 }}>
-            {(create.error as Error).message}
-          </p>
-        ) : null}
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={create.isPending}
-        >
+        <label className="check">
+          <input type="checkbox" name="isDefault" defaultChecked />
+          Varsayılan kart yap
+        </label>
+        {create.isError ? <p className="error">{create.error.message}</p> : null}
+        <button type="submit" className="btn btn-primary" disabled={create.isPending}>
           Kaydet
         </button>
       </form>

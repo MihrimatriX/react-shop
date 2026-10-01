@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import type { Category, Product } from "@/types/api";
-import { unitPriceAfterDiscount } from "@/store/cartStore";
-import { reviewsForProduct } from "@/server/catalog";
 import {
   SITE_DESCRIPTION,
   SITE_LOCALE,
@@ -102,51 +100,24 @@ export function websiteJsonLd() {
 
 export function productJsonLd(p: Product) {
   const url = absUrl(`/product/${p.id}`);
-  const price = unitPriceAfterDiscount(p);
-  const reviews = reviewsForProduct(p.id);
-  const count = reviews.length;
-  const average =
-    count > 0
-      ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / count) * 10) / 10
-      : undefined;
   const brand = p.productName.split(" ")[0] || SITE_NAME;
+  const crumbs: [string, string][] = [
+    ["Anasayfa", "/"],
+    ["Mağaza", "/shop"],
+    ...(p.categoryName ? [[p.categoryName, `/shop?categoryId=${p.categoryId}`] as [string, string]] : []),
+    [p.productName, `/product/${p.id}`],
+  ];
   return {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "BreadcrumbList",
-        itemListElement: [
-          { "@type": "ListItem", position: 1, name: "Anasayfa", item: absUrl("/") },
-          {
-            "@type": "ListItem",
-            position: 2,
-            name: "Mağaza",
-            item: absUrl("/shop"),
-          },
-          ...(p.categoryName
-            ? [
-                {
-                  "@type": "ListItem",
-                  position: 3,
-                  name: p.categoryName,
-                  item: absUrl(`/shop?categoryId=${p.categoryId}`),
-                },
-                {
-                  "@type": "ListItem",
-                  position: 4,
-                  name: p.productName,
-                  item: url,
-                },
-              ]
-            : [
-                {
-                  "@type": "ListItem",
-                  position: 3,
-                  name: p.productName,
-                  item: url,
-                },
-              ]),
-        ],
+        itemListElement: crumbs.map(([name, path], i) => ({
+          "@type": "ListItem",
+          position: i + 1,
+          name,
+          item: absUrl(path),
+        })),
       },
       {
         "@type": "Product",
@@ -160,19 +131,19 @@ export function productJsonLd(p: Product) {
           "@type": "Offer",
           url,
           priceCurrency: "TRY",
-          price: price.toFixed(2),
+          price: p.price.toFixed(2),
           availability:
             p.unitInStock > 0
               ? "https://schema.org/InStock"
               : "https://schema.org/OutOfStock",
           seller: { "@type": "Organization", name: SITE_NAME },
         },
-        ...(count > 0 && average
+        ...(p.reviewCount > 0
           ? {
               aggregateRating: {
                 "@type": "AggregateRating",
-                ratingValue: average,
-                reviewCount: count,
+                ratingValue: p.rating,
+                reviewCount: p.reviewCount,
                 bestRating: 5,
                 worstRating: 1,
               },
